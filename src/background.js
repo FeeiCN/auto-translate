@@ -9,6 +9,10 @@ const REQUEST_MIN_INTERVAL_MS = 800;
 const MAX_RETRY_ATTEMPTS = 2;
 const RETRY_BASE_DELAY_MS = 1200;
 const RATE_LIMIT_COOLDOWN_MS = 60 * 1000;
+const SUBTITLE_BATCH_MAX_CHARS = 1400;
+const ABC_SUBTITLE_INDEX_CACHE = new Map();
+const ABC_SUBTITLE_CUE_CACHE = new Map();
+const ABC_TRANSLATED_VTT_CACHE = new Map();
 const GROK_WEB_URL = 'https://grok.com/';
 const GROK_INJECTION_RETRY = 8;
 const GROK_INJECTION_RETRY_INTERVAL_MS = 700;
@@ -64,7 +68,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 
     var imagePayload = await fetchImagePayload(srcUrl);
     if (!imagePayload || !imagePayload.base64Data) {
-      console.warn('[X Tweet Translator] Skip image to Grok: payload unavailable or too large.');
+      console.warn('[auto-translate] Skip image to Grok: payload unavailable or too large.');
       return;
     }
 
@@ -84,17 +88,69 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (!message || message.type !== 'translate') {
+  if (!message || !message.type) {
     return;
   }
 
-  translateText(message)
-    .then((payload) => sendResponse({ ok: true, ...payload }))
-    .catch((error) => {
-      sendResponse({ ok: false, error: error.message || 'Translation failed' });
-    });
+  if (message.type === 'translate') {
+    translateText(message)
+      .then((payload) => sendResponse({ ok: true, ...payload }))
+      .catch((error) => {
+        sendResponse({ ok: false, error: error.message || 'Translation failed' });
+      });
 
-  return true;
+    return true;
+  }
+
+  if (message.type === 'translate-subtitle-track') {
+    translateSubtitleTrack(message)
+      .then((payload) => sendResponse({ ok: true, ...payload }))
+      .catch((error) => {
+        sendResponse({ ok: false, error: error.message || 'Subtitle translation failed' });
+      });
+
+    return true;
+  }
+
+  if (message.type === 'translate-subtitle-vtt-text') {
+    translateSubtitleVttText(message)
+      .then((payload) => sendResponse({ ok: true, ...payload }))
+      .catch((error) => {
+        sendResponse({ ok: false, error: error.message || 'Subtitle translation failed' });
+      });
+
+    return true;
+  }
+
+  if (message.type === 'load-abc-subtitle-cues') {
+    loadAbcSubtitleCues(message)
+      .then((payload) => sendResponse({ ok: true, ...payload }))
+      .catch((error) => {
+        sendResponse({ ok: false, error: error.message || 'Failed to load subtitle cues' });
+      });
+
+    return true;
+  }
+
+  if (message.type === 'load-abc-subtitle-index') {
+    loadAbcSubtitleIndex(message)
+      .then((payload) => sendResponse({ ok: true, ...payload }))
+      .catch((error) => {
+        sendResponse({ ok: false, error: error.message || 'Failed to load subtitle index' });
+      });
+
+    return true;
+  }
+
+  if (message.type === 'load-abc-subtitle-segment-cues') {
+    loadAbcSubtitleSegmentCues(message)
+      .then((payload) => sendResponse({ ok: true, ...payload }))
+      .catch((error) => {
+        sendResponse({ ok: false, error: error.message || 'Failed to load subtitle segment' });
+      });
+
+    return true;
+  }
 });
 
 async function setupContextMenus() {
@@ -654,7 +710,7 @@ async function translateText({ text, sourceLanguage = '', targetLanguage = 'zh-C
   try {
     cached = await getCachedTranslation(cacheKey);
   } catch (error) {
-    console.warn('[X Tweet Translator] Failed to read translation cache:', error);
+    console.warn('[auto-translate] Failed to read translation cache:', error);
   }
 
   if (cached) {
@@ -711,7 +767,7 @@ async function fetchAndCacheTranslation({
       try {
         await setCachedTranslation(cacheKey, translatedText, provider.id);
       } catch (cacheError) {
-        console.warn('[X Tweet Translator] Failed to write translation cache:', cacheError);
+        console.warn('[auto-translate] Failed to write translation cache:', cacheError);
       }
       return {
         translatedText,
@@ -735,6 +791,608 @@ async function fetchAndCacheTranslation({
   }
 
   throw new Error('No translation providers available');
+}
+
+async function translateSubtitleTrack({ url, sourceLanguage = 'en', targetLanguage = 'zh-CN' }) {
+  const subtitleUrl = String(url || '').trim();
+  if (!subtitleUrl) {
+    throw new Error('Empty subtitle URL');
+  }
+
+  const response = await fetch(subtitleUrl, {
+    method: 'GET',
+    headers: {
+      Accept: 'text/vtt,text/plain,*/*'
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`Subtitle HTTP ${response.status}`);
+  }
+
+  const vttText = await response.text();
+  const bilingualVtt = await buildBilingualVtt(vttText, {
+    sourceLanguage,
+    targetLanguage
+  });
+
+  return {
+    vtt: bilingualVtt,
+    providerId: 'googlegtx',
+    providerLabel: getProviderLabel('googlegtx')
+  };
+}
+
+async function translateSubtitleVttText({ url = '', vttText = '', sourceLanguage = 'en', targetLanguage = 'zh-CN' }) {
+  const normalizedText = String(vttText || '');
+  if (!normalizedText.trim()) {
+    throw new Error('Empty subtitle VTT text');
+  }
+
+  const normalizedTarget = normalizeLanguageCode(targetLanguage) || 'zh-CN';
+  const cacheIdentity = String(url || '').trim() || simpleHash(normalizedText);
+  const cacheKey = `${normalizedTarget}::${cacheIdentity}`;
+
+  if (ABC_TRANSLATED_VTT_CACHE.has(cacheKey)) {
+    return ABC_TRANSLATED_VTT_CACHE.get(cacheKey);
+  }
+
+  const request = buildBilingualVtt(normalizedText, {
+    sourceLanguage,
+    targetLanguage: normalizedTarget
+  })
+    .then((bilingualVtt) => ({
+      vtt: bilingualVtt,
+      providerId: 'googlegtx',
+      providerLabel: getProviderLabel('googlegtx')
+    }))
+    .catch((error) => {
+      ABC_TRANSLATED_VTT_CACHE.delete(cacheKey);
+      throw error;
+    });
+
+  ABC_TRANSLATED_VTT_CACHE.set(cacheKey, request);
+  return request;
+}
+
+async function loadAbcSubtitleIndex({ masterUrl }) {
+  const normalizedMasterUrl = String(masterUrl || '').trim();
+  if (!normalizedMasterUrl) {
+    throw new Error('Empty master playlist URL');
+  }
+
+  if (ABC_SUBTITLE_INDEX_CACHE.has(normalizedMasterUrl)) {
+    return ABC_SUBTITLE_INDEX_CACHE.get(normalizedMasterUrl);
+  }
+
+  const request = buildAbcSubtitleIndexPayload({
+    masterUrl: normalizedMasterUrl
+  }).catch((error) => {
+    ABC_SUBTITLE_INDEX_CACHE.delete(normalizedMasterUrl);
+    throw error;
+  });
+
+  ABC_SUBTITLE_INDEX_CACHE.set(normalizedMasterUrl, request);
+  return request;
+}
+
+async function buildAbcSubtitleIndexPayload({ masterUrl }) {
+  const masterPlaylistText = await fetchTextResource(masterUrl, 'application/vnd.apple.mpegurl,text/plain,*/*');
+  const subtitlePlaylistUrl = extractSubtitlePlaylistUrl(masterPlaylistText, masterUrl);
+  if (!subtitlePlaylistUrl) {
+    throw new Error('No subtitle playlist found in master manifest');
+  }
+
+  const subtitlePlaylistText = await fetchTextResource(
+    subtitlePlaylistUrl,
+    'application/vnd.apple.mpegurl,text/plain,*/*'
+  );
+  const segments = extractSubtitleSegments(subtitlePlaylistText, subtitlePlaylistUrl);
+  if (segments.length === 0) {
+    throw new Error('No subtitle segments found');
+  }
+
+  return {
+    masterUrl,
+    subtitlePlaylistUrl,
+    segments
+  };
+}
+
+async function loadAbcSubtitleSegmentCues({ segmentUrl, sourceLanguage = 'en', targetLanguage = 'zh-CN' }) {
+  const normalizedSegmentUrl = String(segmentUrl || '').trim();
+  if (!normalizedSegmentUrl) {
+    throw new Error('Empty subtitle segment URL');
+  }
+
+  const cacheKey = `${normalizeLanguageCode(targetLanguage) || 'zh-CN'}::${normalizedSegmentUrl}`;
+  if (ABC_SUBTITLE_CUE_CACHE.has(cacheKey)) {
+    return ABC_SUBTITLE_CUE_CACHE.get(cacheKey);
+  }
+
+  const request = translateSubtitleTrack({
+    url: normalizedSegmentUrl,
+    sourceLanguage,
+    targetLanguage
+  })
+    .then((translated) => ({
+      segmentUrl: normalizedSegmentUrl,
+      cues: parseBilingualVttCues(translated.vtt || '')
+    }))
+    .catch((error) => {
+      ABC_SUBTITLE_CUE_CACHE.delete(cacheKey);
+      throw error;
+    });
+
+  ABC_SUBTITLE_CUE_CACHE.set(cacheKey, request);
+  return request;
+}
+
+async function loadAbcSubtitleCues({ masterUrl, sourceLanguage = 'en', targetLanguage = 'zh-CN' }) {
+  const normalizedMasterUrl = String(masterUrl || '').trim();
+  if (!normalizedMasterUrl) {
+    throw new Error('Empty master playlist URL');
+  }
+
+  const cacheKey = `${normalizeLanguageCode(targetLanguage) || 'zh-CN'}::${normalizedMasterUrl}`;
+  if (ABC_SUBTITLE_CUE_CACHE.has(cacheKey)) {
+    return ABC_SUBTITLE_CUE_CACHE.get(cacheKey);
+  }
+
+  const request = buildAbcSubtitleCuePayload({
+    masterUrl: normalizedMasterUrl,
+    sourceLanguage,
+    targetLanguage
+  }).catch((error) => {
+    ABC_SUBTITLE_CUE_CACHE.delete(cacheKey);
+    throw error;
+  });
+
+  ABC_SUBTITLE_CUE_CACHE.set(cacheKey, request);
+  return request;
+}
+
+async function buildAbcSubtitleCuePayload({ masterUrl, sourceLanguage = 'en', targetLanguage = 'zh-CN' }) {
+  const masterPlaylistText = await fetchTextResource(masterUrl, 'application/vnd.apple.mpegurl,text/plain,*/*');
+  const subtitlePlaylistUrl = extractSubtitlePlaylistUrl(masterPlaylistText, masterUrl);
+  if (!subtitlePlaylistUrl) {
+    throw new Error('No subtitle playlist found in master manifest');
+  }
+
+  const subtitlePlaylistText = await fetchTextResource(
+    subtitlePlaylistUrl,
+    'application/vnd.apple.mpegurl,text/plain,*/*'
+  );
+  const subtitleSegmentUrls = extractSubtitleSegmentUrls(subtitlePlaylistText, subtitlePlaylistUrl);
+  if (subtitleSegmentUrls.length === 0) {
+    throw new Error('No subtitle segments found');
+  }
+
+  const cues = [];
+  const seenCueKeys = new Set();
+
+  for (const segmentUrl of subtitleSegmentUrls) {
+    const translated = await translateSubtitleTrack({
+      url: segmentUrl,
+      sourceLanguage,
+      targetLanguage
+    });
+
+    const segmentCues = parseBilingualVttCues(translated.vtt || '');
+    for (const cue of segmentCues) {
+      const cueKey = `${cue.startMs}|${cue.endMs}|${cue.text}`;
+      if (seenCueKeys.has(cueKey)) {
+        continue;
+      }
+
+      seenCueKeys.add(cueKey);
+      cues.push(cue);
+    }
+  }
+
+  cues.sort((a, b) => a.startMs - b.startMs);
+  return {
+    masterUrl,
+    subtitlePlaylistUrl,
+    cues
+  };
+}
+
+async function fetchTextResource(url, accept) {
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: {
+      Accept: accept || 'text/plain,*/*'
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+
+  return response.text();
+}
+
+function extractSubtitlePlaylistUrl(masterPlaylistText, masterUrl) {
+  const lines = String(masterPlaylistText || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .split('\n');
+
+  for (const line of lines) {
+    if (!/^#EXT-X-MEDIA:TYPE=SUBTITLES/i.test(line)) {
+      continue;
+    }
+
+    const uriMatch = line.match(/URI="([^"]+)"/i);
+    if (!uriMatch || !uriMatch[1]) {
+      continue;
+    }
+
+    return resolveRelativeUrl(masterUrl, uriMatch[1]);
+  }
+
+  return '';
+}
+
+function extractSubtitleSegmentUrls(playlistText, playlistUrl) {
+  const urls = [];
+  const lines = String(playlistText || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .split('\n');
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) {
+      continue;
+    }
+
+    urls.push(resolveRelativeUrl(playlistUrl, trimmed));
+  }
+
+  return urls.filter(Boolean);
+}
+
+function extractSubtitleSegments(playlistText, playlistUrl) {
+  const lines = String(playlistText || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .split('\n');
+  const segments = [];
+  let pendingDurationMs = 0;
+  let accumulatedMs = 0;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      continue;
+    }
+
+    if (trimmed.startsWith('#EXTINF:')) {
+      const durationValue = Number(trimmed.slice(8).split(',')[0] || 0);
+      pendingDurationMs = Number.isFinite(durationValue) ? Math.max(0, Math.round(durationValue * 1000)) : 0;
+      continue;
+    }
+
+    if (trimmed.startsWith('#')) {
+      continue;
+    }
+
+    const url = resolveRelativeUrl(playlistUrl, trimmed);
+    if (!url) {
+      continue;
+    }
+
+    const ptsStartMs = parsePtsMsFromSegmentUrl(url);
+    const startMs = Number.isFinite(ptsStartMs) ? ptsStartMs : accumulatedMs;
+    const durationMs = pendingDurationMs;
+
+    segments.push({
+      index: segments.length,
+      url,
+      startMs,
+      endMs: startMs + durationMs,
+      durationMs
+    });
+
+    accumulatedMs = startMs + durationMs;
+    pendingDurationMs = 0;
+  }
+
+  for (let i = 0; i < segments.length - 1; i += 1) {
+    const nextStartMs = segments[i + 1].startMs;
+    if (Number.isFinite(nextStartMs) && nextStartMs >= segments[i].startMs) {
+      segments[i].endMs = nextStartMs;
+    }
+  }
+
+  return segments;
+}
+
+function parsePtsMsFromSegmentUrl(segmentUrl) {
+  const match = String(segmentUrl || '').match(/\/pts_(\d+)\.vtt(?:$|[?#])/i);
+  if (!match) {
+    return NaN;
+  }
+
+  return Number(match[1] || NaN);
+}
+
+function resolveRelativeUrl(baseUrl, input) {
+  try {
+    return new URL(String(input || ''), String(baseUrl || '')).href;
+  } catch (_error) {
+    return '';
+  }
+}
+
+function parseBilingualVttCues(vttText) {
+  const blocks = String(vttText || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .split(/\n{2,}/);
+  const cues = [];
+
+  for (const block of blocks) {
+    const cue = parseBilingualVttCue(block);
+    if (!cue) {
+      continue;
+    }
+
+    cues.push(cue);
+  }
+
+  return cues;
+}
+
+function parseBilingualVttCue(blockText) {
+  const lines = String(blockText || '').split('\n');
+  const timingLine = lines.find((line) => line.includes('-->'));
+  if (!timingLine) {
+    return null;
+  }
+
+  const parts = timingLine.split('-->');
+  if (parts.length < 2) {
+    return null;
+  }
+
+  const startMs = parseVttTimestampToMs(parts[0]);
+  const endMs = parseVttTimestampToMs(parts[1]);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) {
+    return null;
+  }
+
+  const timingIndex = lines.findIndex((line) => line === timingLine);
+  const payloadLines = lines
+    .slice(timingIndex + 1)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (payloadLines.length === 0) {
+    return null;
+  }
+
+  return {
+    startMs,
+    endMs,
+    text: payloadLines.join('\n')
+  };
+}
+
+function parseVttTimestampToMs(value) {
+  const match = String(value || '')
+    .trim()
+    .match(/(?:(\d+):)?(\d{2}):(\d{2})\.(\d{3})/);
+  if (!match) {
+    return NaN;
+  }
+
+  const hours = Number(match[1] || 0);
+  const minutes = Number(match[2] || 0);
+  const seconds = Number(match[3] || 0);
+  const milliseconds = Number(match[4] || 0);
+  return (((hours * 60) + minutes) * 60 + seconds) * 1000 + milliseconds;
+}
+
+async function buildBilingualVtt(vttText, { sourceLanguage = 'en', targetLanguage = 'zh-CN' }) {
+  const normalizedVtt = String(vttText || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n');
+  const blocks = normalizedVtt.split(/\n{2,}/);
+  const parsedCues = [];
+  const cueTexts = [];
+
+  for (let i = 0; i < blocks.length; i += 1) {
+    const cue = parseVttCueBlock(blocks[i]);
+    parsedCues.push(cue);
+
+    if (!cue) {
+      continue;
+    }
+
+    const cueText = cue.payloadLines.join('\n').trim();
+    if (!shouldTranslateCueText(cueText)) {
+      continue;
+    }
+
+    cueTexts.push({
+      blockIndex: i,
+      text: cueText
+    });
+  }
+
+  if (cueTexts.length === 0) {
+    return normalizedVtt;
+  }
+
+  const translatedTexts = await translateCuePayloads(
+    cueTexts.map((item) => item.text),
+    { sourceLanguage, targetLanguage }
+  );
+
+  for (let i = 0; i < cueTexts.length; i += 1) {
+    const item = cueTexts[i];
+    const translatedText = trimTranslatedCueText(translatedTexts[i] || '');
+    if (!translatedText || translatedText === item.text) {
+      continue;
+    }
+
+    const cue = parsedCues[item.blockIndex];
+    cue.payloadLines = cue.payloadLines.concat(translatedText.split('\n'));
+    blocks[item.blockIndex] = renderVttCueBlock(cue);
+  }
+
+  return blocks.join('\n\n');
+}
+
+function parseVttCueBlock(blockText) {
+  const lines = String(blockText || '').split('\n');
+  const timingIndex = lines.findIndex((line) => line.includes('-->'));
+  if (timingIndex === -1) {
+    return null;
+  }
+
+  return {
+    identifierLines: lines.slice(0, timingIndex),
+    timingLine: lines[timingIndex],
+    payloadLines: lines.slice(timingIndex + 1)
+  };
+}
+
+function renderVttCueBlock(cue) {
+  return [
+    ...cue.identifierLines,
+    cue.timingLine,
+    ...cue.payloadLines
+  ].join('\n');
+}
+
+function shouldTranslateCueText(text) {
+  const value = trimTranslatedCueText(text);
+  if (!value) {
+    return false;
+  }
+
+  if (/^[\s\u266a]+$/.test(value)) {
+    return false;
+  }
+
+  return !normalizeLanguageCode(detectSourceLanguage(value)).startsWith('zh');
+}
+
+async function translateCuePayloads(payloads, { sourceLanguage = 'en', targetLanguage = 'zh-CN' }) {
+  const results = new Array(payloads.length);
+  const batches = buildSubtitleBatches(payloads);
+
+  for (const batch of batches) {
+    try {
+      const translatedBatch = await translateSubtitleBatch(batch, {
+        sourceLanguage,
+        targetLanguage
+      });
+
+      for (let i = 0; i < batch.length; i += 1) {
+        results[batch[i].index] = translatedBatch[i];
+      }
+    } catch (_error) {
+      for (const item of batch) {
+        const response = await translateText({
+          text: item.text,
+          sourceLanguage,
+          targetLanguage
+        });
+        results[item.index] = trimTranslatedCueText(response.translatedText || '');
+      }
+    }
+  }
+
+  return results;
+}
+
+function buildSubtitleBatches(payloads) {
+  const batches = [];
+  let currentBatch = [];
+  let currentLength = 0;
+
+  for (let i = 0; i < payloads.length; i += 1) {
+    const text = trimTranslatedCueText(payloads[i]);
+    if (!text) {
+      continue;
+    }
+
+    const separatorOverhead = currentBatch.length === 0 ? 0 : 24;
+    const nextLength = currentLength + separatorOverhead + text.length;
+    if (currentBatch.length > 0 && nextLength > SUBTITLE_BATCH_MAX_CHARS) {
+      batches.push(currentBatch);
+      currentBatch = [];
+      currentLength = 0;
+    }
+
+    currentBatch.push({
+      index: i,
+      text
+    });
+    currentLength += (currentBatch.length === 1 ? 0 : 24) + text.length;
+  }
+
+  if (currentBatch.length > 0) {
+    batches.push(currentBatch);
+  }
+
+  return batches;
+}
+
+async function translateSubtitleBatch(batch, { sourceLanguage = 'en', targetLanguage = 'zh-CN' }) {
+  const separatorTokens = [];
+  let joinedText = '';
+
+  for (let i = 0; i < batch.length; i += 1) {
+    if (i > 0) {
+      const token = `[[XT_SUB_SPLIT_${i - 1}]]`;
+      separatorTokens.push(token);
+      joinedText += `\n${token}\n`;
+    }
+
+    joinedText += batch[i].text;
+  }
+
+  const translatedText = await runProviderWithRetries({
+    provider: { id: 'googlegtx' },
+    safeText: joinedText,
+    normalizedSource:
+      normalizeLanguageCode(sourceLanguage) ||
+      detectSourceLanguage(joinedText) ||
+      'en',
+    normalizedTarget: normalizeLanguageCode(targetLanguage) || 'zh-CN'
+  });
+
+  return splitTranslatedSubtitleBatch(translatedText, separatorTokens);
+}
+
+function splitTranslatedSubtitleBatch(translatedText, separatorTokens) {
+  const parts = [];
+  let remaining = String(translatedText || '');
+
+  for (const token of separatorTokens) {
+    const tokenIndex = remaining.indexOf(token);
+    if (tokenIndex === -1) {
+      throw new Error('Subtitle batch separator lost during translation');
+    }
+
+    parts.push(trimTranslatedCueText(remaining.slice(0, tokenIndex)));
+    remaining = remaining.slice(tokenIndex + token.length);
+  }
+
+  parts.push(trimTranslatedCueText(remaining));
+  return parts;
+}
+
+function trimTranslatedCueText(text) {
+  return String(text || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .trim();
 }
 
 async function runProviderWithRetries({

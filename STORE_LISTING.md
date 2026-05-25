@@ -1,16 +1,17 @@
-# Chrome Web Store Listing Draft - X Tweet Translator
+# Chrome Web Store Listing Draft - auto-translate
 
 ## Short description
 
-Translate X tweets in your timeline, with auto-translate, manual translate, and ad tweet hiding.
+Translate supported content on X and abc.com, with auto-translate, manual translate, and bilingual subtitles.
 
 ## Detailed description
 
-X Tweet Translator helps you read tweets faster by adding in-place translation directly on X (Twitter).
+auto-translate helps you read supported web content faster by adding in-place translation on X (Twitter) and bilingual subtitles on abc.com.
 
 Key features:
 - Translate visible tweet text automatically
 - Translate a single tweet manually with one click
+- Add Chinese translation after each English subtitle line on supported abc.com videos
 - Skip translation for Chinese tweets
 - Hide promoted ad tweets labeled as "Ad"
 - Choose target language in popup settings
@@ -29,6 +30,7 @@ English (you can also provide a Chinese listing variant)
 
 - `storage`: Save user settings and local translation cache.
 - `x.com` / `twitter.com` host permission: Detect tweet text and render translation results.
+- `abc.com` / `*.media.dssott.com` host permission: Intercept subtitle requests and rewrite returned subtitle text for bilingual playback.
 - Translation API host permission: Send text for translation and receive translated output.
 
 ## Privacy practices summary

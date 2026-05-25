@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "X Tweet Translator",
-  "description": "Translate tweets on X directly in the timeline.",
-  "version": "0.1.40",
+  "name": "auto-translate",
+  "description": "Translate supported web content, including X timelines and abc.com subtitles.",
+  "version": "0.1.47",
   "permissions": ["storage", "contextMenus", "tabs", "scripting", "clipboardWrite"],
   "icons": {
     "16": "src/icons/icon16.png",
@@ -13,9 +13,12 @@
   "host_permissions": [
     "https://x.com/*",
     "https://twitter.com/*",
+    "https://abc.com/*",
+    "https://www.abc.com/*",
     "https://api.mymemory.translated.net/*",
     "https://libretranslate.com/*",
     "https://translate.googleapis.com/*",
+    "https://*.media.dssott.com/*",
     "https://grok.com/*",
     "https://pbs.twimg.com/*",
     "https://*.twimg.com/*"
@@ -25,7 +28,7 @@
     "type": "module"
   },
   "action": {
-    "default_title": "X Tweet Translator",
+    "default_title": "auto-translate",
     "default_icon": {
       "16": "src/icons/icon16.png",
       "32": "src/icons/icon32.png"
@@ -38,6 +41,23 @@
       "js": ["src/content.js"],
       "css": ["src/content.css"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://pan.baidu.com/*", "http://pan.baidu.com/*"],
+      "js": ["src/pan-hide-ai-btn.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://abc.com/*", "https://www.abc.com/*"],
+      "js": ["src/abc-subtitles.js"],
+      "all_frames": true,
+      "run_at": "document_start"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["src/abc-page-hook.js"],
+      "matches": ["https://abc.com/*", "https://www.abc.com/*"]
     }
   ]
 }

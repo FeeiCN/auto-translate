@@ -1,19 +1,21 @@
-# X Tweet Translator
+# auto-translate
 
-一个用于在 X（Twitter）时间线上自动翻译内容的 Chrome 插件，主打免费使用（无需翻译密钥）、自动识别、多语言支持。
+一个用于翻译受支持页面内容的 Chrome 插件，当前支持 X（Twitter）时间线与 `abc.com` 视频字幕，主打免费使用（无需翻译密钥）、自动识别、多语言支持。
 
 > 本项目为 AI Coding 实践项目，基于 OpenAI Codex（GPT-5.3-Codex）完成开发与迭代。
 
 ## 图片预览
 
-![X Tweet Translator Screenshot](./ScreenShot_X-Tweet-Translator.png)
-![X Tweet Translator Popup](./ScreenShot_popup.png)
-![X Tweet Translator Analyze Text Or Image](./ScreenShot_analysis_text_or_image.png)
+![auto-translate Screenshot](./ScreenShot_X-Tweet-Translator.png)
+![auto-translate Popup](./ScreenShot_popup.png)
+![auto-translate Analyze Text Or Image](./ScreenShot_analysis_text_or_image.png)
+![auto-translate ABC Subtitle](./abc.png)
 
 ## 当前功能
 
 - 自动识别页面中的推文正文（`data-testid="tweetText"`）
 - 自动识别并翻译推文内文章卡片标题（非中文）
+- 支持 `abc.com` 视频字幕中英双语化（英文原文后追加中文翻译）
 - 免费可用，无需配置任何翻译 API Key
 - 多语言翻译支持（中/英/日/韩/西等）
 - 支持自动翻译可见推文
@@ -32,7 +34,7 @@
 
 ## 技术方案
 
-- `content script` 注入到 `x.com` 页面，负责识别推文并渲染翻译 UI
+- `content script` 注入到 `x.com` 与 `abc.com` 页面，分别负责推文翻译与视频字幕改写
 - `service worker` 统一发起翻译请求（当前接 MyMemory 免费接口）
 - 翻译服务采用多 Provider 自动降级（MyMemory -> Google GTX -> LibreTranslate）
 - 后台会自动做基础语言识别（zh/ja/ko/ru/en）后再调用接口，避免 `AUTO` 参数报错
@@ -46,11 +48,47 @@
 2. 打开右上角 `开发者模式`
 3. 点击 `加载已解压的扩展程序`
 4. 选择本项目目录
-5. 打开 `https://x.com` 验证效果
+5. 打开 `https://x.com` 或 `https://abc.com` 验证效果
 
 ## Changelog
 
 > 规则：每次 `manifest.json` 版本号变更时，必须同步更新本节。
+
+### v0.1.47
+- 项目与扩展名称统一调整为 `auto-translate`
+- 扩展标题、Popup、文档、隐私政策与商店文案同步去除旧品牌名
+- 项目描述改为通用翻译工具表述，明确当前支持 `x.com` 时间线与 `abc.com` 视频字幕
+
+### v0.1.46
+- `abc.com` 字幕链路改为页面级 `fetch/XHR` 响应改写，不再依赖播放器上方自绘字幕层
+- 新增 `translate-subtitle-vtt-text` 后台接口：直接接收原始 `WebVTT` 文本并回写双语 `WebVTT`
+- `abc-page-hook` 现在会拦截 `.vtt` 请求，并把播放器实际收到的字幕文本替换为“英文原文 + 中文字幕”
+
+### v0.1.45
+- `abc.com` 字幕目标语言固定为简体中文，不再跟随 X/Twitter 的全局目标语言设置
+- 修复全局目标语言被设为英文时，`abc.com` 只能显示英文、不会追加中文字幕的问题
+
+### v0.1.44
+- 修复 `abc.com` 字幕长期停留在 `Loading bilingual subtitles...` 的问题
+- 改为“字幕索引 + 分段懒加载”：先解析字幕分段清单，只翻当前播放段和下一段，不再整集阻塞
+- 提升单段翻译吞吐：字幕批次长度增大，减少 `Google GTX` 请求次数
+- 保留旧的主清单 hook 与资源扫描兜底，但前端渲染改成按播放时间逐段补齐
+
+### v0.1.43
+- 修复 `abc.com` 播放链路竞态：直接监听页面播放接口响应获取签名主 `m3u8`，不再依赖资源扫描猜测
+- 新增页面上下文 `fetch/XHR` hook，仅提取播放器播放响应中的主清单地址，再交给扩展后台拉取字幕
+- 修复首帧时序问题：播放接口先返回、`video` 后挂载时不再把已获取的字幕主清单与字幕数据清空
+- 加入失败兜底提示：字幕加载失败时显示 `Bilingual subtitles unavailable`，避免页面表面无变化
+
+### v0.1.42
+- 修复 `abc.com` 无效果问题：不再依赖原生 `<track>` 或播放器内建字幕
+- 新增 `abc.com` 自绘字幕层：基于 `Fitt/Hive` 视频时间轴在播放器上方渲染中英双语字幕
+- 新增主清单与字幕分段解析链路：自动从播放 `m3u8` 推导字幕清单并批量翻译各段 `VTT`
+
+### v0.1.41
+- 新增 `abc.com` 字幕轨道注入：检测 `WebVTT` 字幕后自动替换为中英双语字幕
+- 后台新增批量 `VTT` 翻译链路：按字幕块分批翻译并保留时间轴与原文换行
+- 新增 `abc.com` 与 `*.media.dssott.com` 权限，用于监听页面字幕轨道与拉取原始字幕文件
 
 ### v0.1.40
 - 修复翻译缓存写入失败会导致整次翻译失败的问题（缓存失败仅告警，不阻断翻译返回）
@@ -204,7 +242,7 @@
 ### v0.1.4
 - 新增插件 Logo 与多尺寸图标（16/32/48/128）
 - Popup 顶部展示品牌图标
-- 统一项目名为 `X Tweet Translator`
+- 统一早期项目视觉品牌
 
 ### v0.1.3
 - 中文推文默认跳过，不注入翻译入口

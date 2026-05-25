@@ -1,27 +1,27 @@
-# Privacy Policy - X Tweet Translator
+# Privacy Policy - auto-translate
 
 Effective date: March 7, 2026
 
 ## What this extension does
 
-X Tweet Translator translates tweet text on `x.com` / `twitter.com` pages for the user.
+auto-translate translates supported page content for the user, including tweet text on `x.com` / `twitter.com` and subtitle text on supported `abc.com` videos.
 
 ## Data we process
 
-- Tweet text selected for translation
+- Tweet text and subtitle text selected for translation
 - Extension settings stored in Chrome storage (`enabled`, `autoTranslate`, `targetLanguage`)
 - Translation cache entries stored locally in Chrome storage (`chrome.storage.local`)
 
 ## How data is used
 
-- Tweet text is sent to the configured translation provider (current MVP: MyMemory API) only for translation.
+- Tweet text and subtitle text are sent to the configured translation providers only for translation.
 - Settings are used to control extension behavior.
 - Cache is used to reduce repeated translation requests and improve speed.
 
 ## Data sharing
 
 - We do not sell personal data.
-- Tweet text is sent to the translation provider strictly to return translated text.
+- Tweet text and subtitle text are sent to translation providers strictly to return translated text.
 
 ## Data retention
 
@@ -32,7 +32,8 @@ X Tweet Translator translates tweet text on `x.com` / `twitter.com` pages for th
 
 - `storage`: save settings and translation cache.
 - Host access to `x.com` / `twitter.com`: read tweet text and render translation UI.
-- Host access to translation API domain: send translation requests.
+- Host access to `abc.com` / `*.media.dssott.com`: intercept subtitle requests and return bilingual subtitle text for playback.
+- Host access to translation API domains: send translation requests.
 
 ## Security
 
