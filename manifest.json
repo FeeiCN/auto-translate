@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "auto-translate",
-  "description": "Translate supported web content, including X timelines and abc.com subtitles.",
-  "version": "0.1.47",
+  "description": "Translate supported web content, including X timelines, abc.com subtitles, and YouTube subtitles.",
+  "version": "0.1.48",
   "permissions": ["storage", "contextMenus", "tabs", "scripting", "clipboardWrite"],
   "icons": {
     "16": "src/icons/icon16.png",
@@ -15,6 +15,8 @@
     "https://twitter.com/*",
     "https://abc.com/*",
     "https://www.abc.com/*",
+    "https://www.youtube.com/*",
+    "https://youtube.com/*",
     "https://api.mymemory.translated.net/*",
     "https://libretranslate.com/*",
     "https://translate.googleapis.com/*",
@@ -52,12 +54,22 @@
       "js": ["src/abc-subtitles.js"],
       "all_frames": true,
       "run_at": "document_start"
+    },
+    {
+      "matches": ["https://www.youtube.com/*", "https://youtube.com/*"],
+      "js": ["src/youtube-subtitles.js"],
+      "all_frames": true,
+      "run_at": "document_start"
     }
   ],
   "web_accessible_resources": [
     {
       "resources": ["src/abc-page-hook.js"],
       "matches": ["https://abc.com/*", "https://www.abc.com/*"]
+    },
+    {
+      "resources": ["src/youtube-page-hook.js"],
+      "matches": ["https://www.youtube.com/*", "https://youtube.com/*"]
     }
   ]
 }

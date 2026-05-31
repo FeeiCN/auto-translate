@@ -2,16 +2,17 @@
 
 ## Short description
 
-Translate supported content on X and abc.com, with auto-translate, manual translate, and bilingual subtitles.
+Translate supported content on X, abc.com, and YouTube, with auto-translate, manual translate, and bilingual subtitles.
 
 ## Detailed description
 
-auto-translate helps you read supported web content faster by adding in-place translation on X (Twitter) and bilingual subtitles on abc.com.
+auto-translate helps you read supported web content faster by adding in-place translation on X (Twitter) and bilingual subtitles on abc.com and YouTube.
 
 Key features:
 - Translate visible tweet text automatically
 - Translate a single tweet manually with one click
 - Add Chinese translation after each English subtitle line on supported abc.com videos
+- Add target-language translation after English auto captions on YouTube
 - Skip translation for Chinese tweets
 - Hide promoted ad tweets labeled as "Ad"
 - Choose target language in popup settings
@@ -31,6 +32,7 @@ English (you can also provide a Chinese listing variant)
 - `storage`: Save user settings and local translation cache.
 - `x.com` / `twitter.com` host permission: Detect tweet text and render translation results.
 - `abc.com` / `*.media.dssott.com` host permission: Intercept subtitle requests and rewrite returned subtitle text for bilingual playback.
+- YouTube host permission: Intercept English `json3` subtitle requests and rewrite returned subtitle text for bilingual playback.
 - Translation API host permission: Send text for translation and receive translated output.
 
 ## Privacy practices summary

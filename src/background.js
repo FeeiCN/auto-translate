@@ -122,6 +122,29 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === 'parse-youtube-subtitle-cues') {
+    try {
+      sendResponse({
+        ok: true,
+        cues: parseJson3Cues(message.jsonText || '')
+      });
+    } catch (error) {
+      sendResponse({ ok: false, error: error.message || 'Failed to parse YouTube subtitle cues' });
+    }
+
+    return;
+  }
+
+  if (message.type === 'translate-youtube-subtitle-cue-texts') {
+    translateYoutubeSubtitleCueTexts(message)
+      .then((payload) => sendResponse({ ok: true, ...payload }))
+      .catch((error) => {
+        sendResponse({ ok: false, error: error.message || 'Failed to translate YouTube subtitle cues' });
+      });
+
+    return true;
+  }
+
   if (message.type === 'load-abc-subtitle-cues') {
     loadAbcSubtitleCues(message)
       .then((payload) => sendResponse({ ok: true, ...payload }))
@@ -855,6 +878,44 @@ async function translateSubtitleVttText({ url = '', vttText = '', sourceLanguage
   return request;
 }
 
+async function translateYoutubeSubtitleCueTexts({
+  cues = [],
+  sourceLanguage = 'en',
+  targetLanguage = 'zh-CN'
+}) {
+  const normalizedTarget = normalizeLanguageCode(targetLanguage) || 'zh-CN';
+  const items = Array.isArray(cues)
+    ? cues
+        .map((cue, index) => ({
+          index,
+          key: String((cue && cue.key) || index),
+          text: trimTranslatedCueText((cue && cue.text) || '')
+        }))
+        .filter((cue) => shouldTranslateCueText(cue.text))
+    : [];
+
+  if (items.length === 0) {
+    return {
+      translations: []
+    };
+  }
+
+  const translatedTexts = await translateCuePayloads(
+    items.map((item) => item.text),
+    {
+      sourceLanguage,
+      targetLanguage: normalizedTarget
+    }
+  );
+
+  return {
+    translations: items.map((item, index) => ({
+      key: item.key,
+      text: trimTranslatedCueText(translatedTexts[index] || '')
+    }))
+  };
+}
+
 async function loadAbcSubtitleIndex({ masterUrl }) {
   const normalizedMasterUrl = String(masterUrl || '').trim();
   if (!normalizedMasterUrl) {
@@ -1393,6 +1454,60 @@ function trimTranslatedCueText(text) {
     .replace(/\r\n/g, '\n')
     .replace(/\r/g, '\n')
     .trim();
+}
+
+function extractJson3EventText(event) {
+  if (!event || !Array.isArray(event.segs)) {
+    return '';
+  }
+
+  return trimTranslatedCueText(
+    event.segs
+      .map((segment) => {
+        if (!segment || typeof segment.utf8 !== 'string') {
+          return '';
+        }
+
+        return segment.utf8;
+      })
+      .join('')
+  );
+}
+
+function parseJson3Cues(jsonText) {
+  let payload;
+  try {
+    payload = JSON.parse(String(jsonText || ''));
+  } catch (_error) {
+    return [];
+  }
+
+  if (!payload || !Array.isArray(payload.events)) {
+    return [];
+  }
+
+  const cues = [];
+  for (const event of payload.events) {
+    const startMs = Number(event && event.tStartMs);
+    if (!Number.isFinite(startMs)) {
+      continue;
+    }
+
+    const durationMs = Number(event && event.dDurationMs);
+    const text = extractJson3EventText(event);
+    if (!text) {
+      continue;
+    }
+
+    const safeDurationMs = Number.isFinite(durationMs) && durationMs > 0 ? durationMs : 1800;
+    cues.push({
+      startMs,
+      endMs: startMs + safeDurationMs,
+      text
+    });
+  }
+
+  return cues;
 }
 
 async function runProviderWithRetries({

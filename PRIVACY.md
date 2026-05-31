@@ -4,7 +4,7 @@ Effective date: March 7, 2026
 
 ## What this extension does
 
-auto-translate translates supported page content for the user, including tweet text on `x.com` / `twitter.com` and subtitle text on supported `abc.com` videos.
+auto-translate translates supported page content for the user, including tweet text on `x.com` / `twitter.com` and subtitle text on supported `abc.com` and YouTube videos.
 
 ## Data we process
 
@@ -33,6 +33,7 @@ auto-translate translates supported page content for the user, including tweet t
 - `storage`: save settings and translation cache.
 - Host access to `x.com` / `twitter.com`: read tweet text and render translation UI.
 - Host access to `abc.com` / `*.media.dssott.com`: intercept subtitle requests and return bilingual subtitle text for playback.
+- Host access to YouTube: intercept English `json3` subtitle requests and return bilingual subtitle text for playback.
 - Host access to translation API domains: send translation requests.
 
 ## Security
